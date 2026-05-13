@@ -6,8 +6,7 @@
 
 import streamlit as st
 import pandas as pd
-import sqlite3
-import anthropic
+
 import uuid
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
