@@ -29,7 +29,7 @@ def load_excel_data():
         words_df = pd.read_excel("words_data.xlsx")
         
         # معالجة الخلايا المدمجة
-        words_df['اللفظ'] = words_df['اللفظ'].fillna(method='ffill')
+        words_df['اللفظ'] = words_df['اللفظ'].ffill()
         return quran_df, words_df
     except Exception as e:
         st.error(f"❌ خطأ مادي في تحميل البيانات: {e}")
