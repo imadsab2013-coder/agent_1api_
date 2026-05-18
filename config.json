@@ -1,0 +1,21 @@
+{
+  "system_prompt": "",
+  "engines": {
+    "gemini": {
+      "api_key": "",
+      "status": "ON"
+    },
+    "groq": {
+      "api_key": "",
+      "status": "OFF"
+    },
+    "gpt": {
+      "api_key": "",
+      "status": "OFF"
+    },
+    "deepseek": {
+      "api_key": "",
+      "status": "OFF"
+    }
+  }
+}
