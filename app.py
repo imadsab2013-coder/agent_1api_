@@ -13,11 +13,12 @@ st.set_page_config(page_title="السبورة التفاعلية - Single-Agent"
 
 CONFIG_FILE = "config.json"
 
+# مصفوفة المحركات والموديلات المحدثة والمطابقة للسيرفرات الحالية
 MODELS_MATRIX = {
-    "gemini": ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.0-pro", "gemini-1.5-pro", "gemini-2.0-pro-exp"],
-    "groq": ["llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it", "llama3-70b-8192", "whisper-large-v3"],
-    "gpt": ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-4o", "o1-mini"],
-    "deepseek": ["deepseek-chat", "deepseek-coder", "deepseek-moe", "deepseek-reasoner", "deepseek-r1"]
+    "gemini": ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.0-pro-exp"],
+    "groq": ["llama-3.1-8b-instant", "llama-3.3-70b-specdec", "gemma2-9b-it", "whisper-large-v3"],
+    "gpt": ["gpt-4o-mini", "gpt-4o", "o1-mini"],
+    "deepseek": ["deepseek-chat", "deepseek-reasoner"]
 }
 
 BASE_URLS = {
@@ -52,7 +53,7 @@ if "last_error" not in st.session_state:
 config = st.session_state.config
 
 # ---------------------------------------------------------
-# 2. ميكانيكا فحص الاتصال القياسية (Ping Logic)
+# 2. ميكانيكا فحص الاتصال القياسية والمصححة (Ping Logic)
 # ---------------------------------------------------------
 def test_connection(engine, api_key, model):
     if not api_key:
@@ -60,13 +61,14 @@ def test_connection(engine, api_key, model):
     try:
         if engine == "gemini":
             genai.configure(api_key=api_key)
-            # استخدام اسم الموديل الصافي مباشرة دون إضافات لمنع الـ 404
+            # استدعاء مباشر وصافي للموديل لمنع أخطاء الـ 404
             test_model = genai.GenerativeModel(model)
             test_model.generate_content("ping")
             return True, "متصل"
         else:
             client = OpenAI(api_key=api_key, base_url=BASE_URLS[engine])
-            test_mod = "llama3-8b-8192" if model == "whisper-large-v3" else model
+            # إصلاح الثغرة: تحويل فحص Whisper تلقائياً لموديل شغال لمنع خطأ الـ Decommissioned
+            test_mod = "llama-3.1-8b-instant" if model == "whisper-large-v3" else model
             client.chat.completions.create(
                 model=test_mod,
                 messages=[{"role": "user", "content": "ping"}],
@@ -76,7 +78,7 @@ def test_connection(engine, api_key, model):
     except Exception as e:
         error_str = str(e)
         if "429" in error_str:
-            return False, "السيرفر المجاني مضغوط حالياً (429 Quota Exceeded). انتظر 30 ثانية وأعد المحاولة، مفتاحك شغال تماماً."
+            return False, "السيرفر المجاني مضغوط حالياً (429 Quota Exceeded). انتظر 30 ثانية ثم أعد المحاولة، مفتاحك صحيح تماماً."
         return False, error_str
 
 # ---------------------------------------------------------
@@ -102,7 +104,12 @@ with st.sidebar:
         api_keys_input[eng] = st.text_input(f"مفتاح {eng.upper()}:", value=config["engines"][eng]["api_key"], type="password")
         
     st.markdown("---")
-    selected_model = st.selectbox("الموديل:", MODELS_MATRIX[selected_engine], index=MODELS_MATRIX[selected_engine].index(st.session_state.active_model) if st.session_state.active_model in MODELS_MATRIX[selected_engine] else 0)
+    
+    # التحقق من مطابقة الموديل النشط للمحرك المختار لتجنب أخطاء الفهرسة
+    if st.session_state.active_model not in MODELS_MATRIX[selected_engine]:
+        st.session_state.active_model = MODELS_MATRIX[selected_engine][0]
+        
+    selected_model = st.selectbox("الموديل:", MODELS_MATRIX[selected_engine], index=MODELS_MATRIX[selected_engine].index(st.session_state.active_model))
     selected_temp = st.slider("درجة الحرارة (Temperature):", 0.0, 1.0, st.session_state.temperature, 0.1)
 
     if st.button("حفظ وفحص الاتصال", use_container_width=True):
@@ -166,6 +173,7 @@ if prompt := st.chat_input("اكتب تحليلك هنا..."):
 
             if active_eng == "gemini":
                 genai.configure(api_key=active_key)
+                # استدعاء الموديل الصافي مباشرة
                 m = genai.GenerativeModel(model_name=current_model, system_instruction=sys_prompt)
                 
                 history = []
