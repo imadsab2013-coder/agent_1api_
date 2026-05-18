@@ -45,33 +45,36 @@ if "active_model" not in st.session_state:
     st.session_state.active_model = MODELS_MATRIX["gemini"][0]
 if "temperature" not in st.session_state:
     st.session_state.temperature = 0.7
+if "last_error" not in st.session_state:
+    st.session_state.last_error = None
 
 config = st.session_state.config
 
 # ---------------------------------------------------------
-# 2. ميكانيكا فحص الاتصال (Ping Logic)
+# 2. ميكانيكا فحص الاتصال بكاشف الأخطاء (Ping Logic)
 # ---------------------------------------------------------
 def test_connection(engine, api_key, model):
     if not api_key:
-        return False
+        return False, "خانة مفتاح الـ API فارغة تماماً."
     try:
         if engine == "gemini":
             genai.configure(api_key=api_key)
-            test_model = genai.GenerativeModel(model)
+            # صياغة اسم الموديل حتمياً بالتنسيق السحابي المدعوم
+            model_name = model if model.startswith("models/") else f"models/{model}"
+            test_model = genai.GenerativeModel(model_name)
             test_model.generate_content("ping")
-            return True
+            return True, "متصل"
         else:
             client = OpenAI(api_key=api_key, base_url=BASE_URLS[engine])
-            # استثناء فحص نموذج الصوت النصي لتجنب أخطاء بروتوكول الـ API
             test_mod = "llama3-8b-8192" if model == "whisper-large-v3" else model
             client.chat.completions.create(
                 model=test_mod,
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=5
             )
-            return True
-    except Exception:
-        return False
+            return True, "متصل"
+    except Exception as e:
+        return False, str(e)
 
 # ---------------------------------------------------------
 # 3. واجهة الإعدادات الفرعية (Settings Panel)
@@ -103,7 +106,6 @@ with st.sidebar:
     selected_temp = st.slider("درجة الحرارة (Temperature):", 0.0, 1.0, st.session_state.temperature, 0.1)
 
     if st.button("حفظ وفحص الاتصال", use_container_width=True):
-        # تحديث التهيئة المادية
         config["system_prompt"] = new_prompt
         for eng in engines_list:
             config["engines"][eng]["api_key"] = api_keys_input[eng]
@@ -114,18 +116,26 @@ with st.sidebar:
         st.session_state.active_model = selected_model
         st.session_state.temperature = selected_temp
         
-        # تنفيذ الفحص
-        is_connected = test_connection(selected_engine, api_keys_input[selected_engine], selected_model)
+        # تنفيذ الفحص واستقبال رسالة السيرفر
+        is_connected, error_msg = test_connection(selected_engine, api_keys_input[selected_engine], selected_model)
+        
         if is_connected:
             st.session_state.status_bulb = f"🟢 متصل ({selected_engine.upper()})"
+            st.session_state.last_error = None
         else:
             st.session_state.status_bulb = f"🔴 غير متصل ({selected_engine.upper()})"
+            st.session_state.last_error = error_msg
         st.rerun()
 
 # ---------------------------------------------------------
 # 4. هندسة السبورة الموحدة والتنفيذ (The Board UI & Execution)
 # ---------------------------------------------------------
 st.markdown(f"### حالة المحرك: {st.session_state.status_bulb}")
+
+# إذا وجد خطأ مادي يتم طباعته فوراً تحت اللمبة
+if st.session_state.last_error:
+    st.error(f"⚠️ سبب رفض السيرفر للاتصال: {st.session_state.last_error}")
+
 st.markdown("---")
 
 # حاوية السبورة - استدعاء الحوار
@@ -135,12 +145,10 @@ for msg in st.session_state.messages:
 
 # إدخال المستخدم وحقن القيود
 if prompt := st.chat_input("اكتب تحليلك هنا..."):
-    # إضافة سؤال المستخدم للسبورة
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # تحديد المحرك النشط وقراءة مفتاحه
     active_eng = None
     for eng, details in config["engines"].items():
         if details["status"] == "ON":
@@ -162,9 +170,9 @@ if prompt := st.chat_input("اكتب تحليلك هنا..."):
 
             if active_eng == "gemini":
                 genai.configure(api_key=active_key)
-                m = genai.GenerativeModel(model_name=current_model, system_instruction=sys_prompt)
+                model_name = current_model if current_model.startswith("models/") else f"models/{current_model}"
+                m = genai.GenerativeModel(model_name=model_name, system_instruction=sys_prompt)
                 
-                # بناء هيكل الرسائل لـ Gemini
                 history = []
                 for m_dict in st.session_state.messages[:-1]:
                     role = "user" if m_dict["role"] == "user" else "model"
@@ -177,7 +185,6 @@ if prompt := st.chat_input("اكتب تحليلك هنا..."):
             else:
                 client = OpenAI(api_key=active_key, base_url=BASE_URLS[active_eng])
                 
-                # حقن البرومبت الحاكم في الـ OpenAI Compatible API
                 messages_payload = [{"role": "system", "content": sys_prompt}]
                 for m_dict in st.session_state.messages:
                     messages_payload.append({"role": m_dict["role"], "content": m_dict["content"]})
