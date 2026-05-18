@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import os
 import requests
+import time
 import google.generativeai as genai
 from openai import OpenAI
 
@@ -51,7 +52,7 @@ if "last_error" not in st.session_state:
 config = st.session_state.config
 
 # ---------------------------------------------------------
-# 2. ميكانيكا فحص الاتصال بكاشف الأخطاء (Ping Logic)
+# 2. ميكانيكا فحص الاتصال القياسية (Ping Logic)
 # ---------------------------------------------------------
 def test_connection(engine, api_key, model):
     if not api_key:
@@ -59,9 +60,8 @@ def test_connection(engine, api_key, model):
     try:
         if engine == "gemini":
             genai.configure(api_key=api_key)
-            # صياغة اسم الموديل حتمياً بالتنسيق السحابي المدعوم
-            model_name = model if model.startswith("models/") else f"models/{model}"
-            test_model = genai.GenerativeModel(model_name)
+            # استخدام اسم الموديل الصافي مباشرة دون إضافات لمنع الـ 404
+            test_model = genai.GenerativeModel(model)
             test_model.generate_content("ping")
             return True, "متصل"
         else:
@@ -74,7 +74,10 @@ def test_connection(engine, api_key, model):
             )
             return True, "متصل"
     except Exception as e:
-        return False, str(e)
+        error_str = str(e)
+        if "429" in error_str:
+            return False, "السيرفر المجاني مضغوط حالياً (429 Quota Exceeded). انتظر 30 ثانية وأعد المحاولة، مفتاحك شغال تماماً."
+        return False, error_str
 
 # ---------------------------------------------------------
 # 3. واجهة الإعدادات الفرعية (Settings Panel)
@@ -82,10 +85,8 @@ def test_connection(engine, api_key, model):
 with st.sidebar:
     st.header("⚙️ إعدادات النظام")
     
-    # البرومبت الحاكم
     new_prompt = st.text_area("النص الحاكم (System Prompt):", value=config.get("system_prompt", ""), height=150)
     
-    # تحديد المحرك النشط (ON/OFF Logic حتمي)
     engines_list = list(config["engines"].keys())
     active_engine_index = 0
     for i, eng in enumerate(engines_list):
@@ -95,7 +96,6 @@ with st.sidebar:
             
     selected_engine = st.radio("المحرك النشط (حظر التعدد):", engines_list, index=active_engine_index)
     
-    # المفاتيح واختيار الموديل
     st.markdown("---")
     api_keys_input = {}
     for eng in engines_list:
@@ -116,7 +116,6 @@ with st.sidebar:
         st.session_state.active_model = selected_model
         st.session_state.temperature = selected_temp
         
-        # تنفيذ الفحص واستقبال رسالة السيرفر
         is_connected, error_msg = test_connection(selected_engine, api_keys_input[selected_engine], selected_model)
         
         if is_connected:
@@ -132,18 +131,15 @@ with st.sidebar:
 # ---------------------------------------------------------
 st.markdown(f"### حالة المحرك: {st.session_state.status_bulb}")
 
-# إذا وجد خطأ مادي يتم طباعته فوراً تحت اللمبة
 if st.session_state.last_error:
-    st.error(f"⚠️ سبب رفض السيرفر للاتصال: {st.session_state.last_error}")
+    st.warning(f"{st.session_state.last_error}")
 
 st.markdown("---")
 
-# حاوية السبورة - استدعاء الحوار
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# إدخال المستخدم وحقن القيود
 if prompt := st.chat_input("اكتب تحليلك هنا..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -170,8 +166,7 @@ if prompt := st.chat_input("اكتب تحليلك هنا..."):
 
             if active_eng == "gemini":
                 genai.configure(api_key=active_key)
-                model_name = current_model if current_model.startswith("models/") else f"models/{current_model}"
-                m = genai.GenerativeModel(model_name=model_name, system_instruction=sys_prompt)
+                m = genai.GenerativeModel(model_name=current_model, system_instruction=sys_prompt)
                 
                 history = []
                 for m_dict in st.session_state.messages[:-1]:
@@ -200,6 +195,9 @@ if prompt := st.chat_input("اكتب تحليلك هنا..."):
             st.session_state.messages.append({"role": "assistant", "content": full_response})
 
         except Exception as e:
-            error_msg = f"**خطأ مادي في الاتصال:** {str(e)}"
+            error_str = str(e)
+            if "429" in error_str:
+                error_msg = "**تنبيه حصة السيرفر (429):** الحساب المجاني تلقى طلبات مكثفة. انتظر دقيقة واحدة واكتب سؤالك مجدداً وسيشتغل ماديّاً وبكفاءة."
+            else:
+                error_msg = f"**خطأ مادي في الاتصال:** {error_str}"
             response_placeholder.markdown(error_msg)
-            st.session_state.status_bulb = f"🔴 غير متصل ({active_eng.upper()})"
